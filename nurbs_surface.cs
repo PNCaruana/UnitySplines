@@ -11,9 +11,23 @@ public class nurbs_surface : MonoBehaviour
         Uniform
     }
 
+    public enum POINT_SPREAD
+    {
+        Equidistant,
+        Linearized
+    }
 
+    /// <summary>
+    /// Changes how the knot vector is generated
+    /// </summary>
     [SerializeField]
     public KNOT_TYPE KnotType;
+
+    /// <summary>
+    /// How the control points are generated in the x-z plane
+    /// </summary>
+    [SerializeField]
+    public POINT_SPREAD PointSpread;
 
     // Start is called before the first frame update
 
@@ -41,6 +55,8 @@ public class nurbs_surface : MonoBehaviour
     [SerializeField]
     public int L = 3;
 
+
+
     private Vector3[,] controlPoints; // x,y as axis, with z as height
     private GameObject[,] controlObjects;
 
@@ -50,31 +66,57 @@ public class nurbs_surface : MonoBehaviour
     {
         controlPoints = new Vector3[uDim , vDim];
         controlObjects = new GameObject[uDim, vDim];
-        //init x,y with default z=0;
-        //Once set, (x,y) are immutable and should not ever be modified
-        int count = 0;
-        for (int x=0; x<uDim; x++)
+
+        if (PointSpread == POINT_SPREAD.Equidistant)
         {
-            float u = (float)x / uDim;
-            for (int y=0; y<vDim; y++)
+
+            //init x,y with default z=0;
+            //Once set, (x,y) are immutable and should not ever be modified
+            int count = 0;
+            for (int x = 0; x < uDim; x++)
             {
-                float v = (float)y / vDim;
+                float u = (float)x / uDim;
+                for (int y = 0; y < vDim; y++)
+                {
+                    float v = (float)y / vDim;
 
-                Vector3 pt = new Vector3(u, 0, v);
+                    Vector3 pt = new Vector3(u, 0, v);
 
-                controlPoints[x, y] = pt;
-                GameObject cp = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                cp.transform.localScale = new Vector3(0.02f, 0.02f, 0.02f);
-                cp.transform.position = pt;
-                cp.transform.SetParent(transform);
-                controlObjects[x, y] = cp;
+                    controlPoints[x, y] = pt;
+                    
 
-                //Debug.Log("Created point at : " + (pt));
+                    //Debug.Log("Created point at : " + (pt));
 
-                count++;
+                    count++;
+                }
+            }
+        }
+        else if (PointSpread == POINT_SPREAD.Linearized) {
+
+            float[] X = generateLinearCoords(uDim, K);
+            float[] Z = generateLinearCoords(vDim, L);
+            
+
+            for (int i=0; i<uDim; i++)
+            {
+                for (int j = 0; j < vDim; j++) {
+                    Vector3 pt = new Vector3(X[i], 0, Z[j]);
+                    controlPoints[i, j] = pt;
+                }
             }
         }
 
+        //Generate control objects
+
+        for (int i = 0; i < uDim; i++) {
+            for (int j = 0; j < vDim; j++) {
+                GameObject cp = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                cp.transform.localScale = new Vector3(0.02f, 0.02f, 0.02f);
+                cp.transform.position = controlPoints[i,j];
+                cp.transform.SetParent(transform);
+                controlObjects[i, j] = cp;
+            }
+        }
         //Vector3 P1 = BS_Spline(0.05f);
 
 
@@ -396,18 +438,68 @@ public class nurbs_surface : MonoBehaviour
         }
     }
 
+    /*Calculates the magic number needed for linear parametric-world space congruency, this gives the values for the 2nd and 2nd last points
+     * Knot Vector <U>
+     * Degree <c>
+     */
+    float magicNumber(float[] U, int c) {
+        float lambda;
+
+        float D1 = BS_Basis_Prime(0, 1, c, U); //Get 2nd basis function of the derivative @ t=0, 
+        lambda = 1 / D1;
+
+        return lambda;
+    }
+
+    /* Generates coordinates for spline such that for a spline of degree c with points n, x(t) = t
+     * [0, lambda, ... 1-lambda, 1]
+     * num points <n>
+     * degree <c>
+     */
+    float[] generateLinearCoords(int n, int c) {
+
+        if (c <= n) {
+            Debug.LogWarning("generateLinearCoords: Warning! Number of points <n> must be greater than degree <c> (n=" + n + ", c=" + c + ")");
+        }
+
+        if (KnotType != KNOT_TYPE.Closed) {
+            Debug.LogWarning("generateLinearCoords: Warning! This type of spline only works with KNOT_TYPE.closed, current is " + KnotType + ", may get unexpected results");
+        }
+
+
+        float[] X = new float[n];
+        float[] U = genKnotVector(n, c, KNOT_TYPE.Closed);
+        float lambda = magicNumber(U, c);
+
+        X[1] = lambda;
+        X[n - 2] = 1 - lambda;
+
+        X[0] = 0;
+        X[n - 1] = 1;
+        for (int i = 2; i < n - 2; i++) {
+            X[i] = U[i + c - 1]; //Starts and ends with the non-zero values in the knot vector
+        }
+
+        return X;
+    }
+
+    // Only works for linearized gradients at the moment
     public Vector3 surfaceGradient(float u, float v) {
         // dz/dx = dz/du / dx/du + dz/dv / dx/dv
         float[] U = genKnotVector(uDim, K, KnotType);
         float[] V = genKnotVector(vDim, L, KnotType);
         //Compute the jacobian
-        Vector3 du = Vector3.zero; //du = <dx/du, dy/du, dz/du>
-        Vector3 dv = Vector3.zero; //db = <dx/dv, dy/dv, dz/dv>
+
+        //Vector3 du = Vector3.zero; //du = <dx/du, dy/du, dz/du>
+        //Vector3 dv = Vector3.zero; //db = <dx/dv, dy/dv, dz/dv>
+
+        float du = 0;
+        float dv = 0;
 
         for (int i = 0; i < uDim; i++) {
             for (int j =0; j < vDim; j++)
             {
-                du += controlPoints[i, j] * BS_Basis_Prime(u, i, K, U) * BS_Basis(v, j, L, V);
+                du += controlPoints[i, j].y * BS_Basis_Prime(u, i, K, U) * BS_Basis(v, j, L, V);
             }
         }
 
@@ -416,21 +508,16 @@ public class nurbs_surface : MonoBehaviour
         {
             for (int j = 0; j < vDim; j++)
             {
-                dv += controlPoints[i, j] * BS_Basis(u, i, K, U) * BS_Basis_Prime(v, j, L, V);
+                dv += controlPoints[i, j].y * BS_Basis(u, i, K, U) * BS_Basis_Prime(v, j, L, V);
             }
         }
 
-        Debug.Log("du " + du);
-        Debug.Log("dv " + dv);
+        Debug.Log("du " + du + ", dv " + dv);
         //Now we want to compute dy/dx and dy/dz
 
-        float dydx;
-        float dydz;
+        
 
-        dydx = du.y / du.x; //chain rule
-        dydz = dv.y / dv.z;
-
-        return new Vector3(dydx, 0, dydz);
+        return new Vector3(du, 0, dv);
     }
 
     float[] genKnotVector(int numPts, int degree, KNOT_TYPE K) {
