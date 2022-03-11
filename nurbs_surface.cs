@@ -55,7 +55,9 @@ public class nurbs_surface : MonoBehaviour
     [SerializeField]
     public int L = 3;
 
-
+    public bool renderSurface = false;
+    public bool neighbourWeighting = true;
+    public float neighbourWeightingFactor = 0.5f;
 
     private Vector3[,] controlPoints; // x,y as axis, with z as height
     private GameObject[,] controlObjects;
@@ -160,22 +162,54 @@ public class nurbs_surface : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
-        float[] K = genKnotVector(7, 3, KNOT_TYPE.Closed);
-        Debug.Log(listToStr(K));
+        //float[] K = genKnotVector(7, 3, KNOT_TYPE.Closed);
+        //Debug.Log(listToStr(K));
 
-        //Debug.Log(BS_Basis(0.9999f, 6, 3, K));
-        drawSurface();
-    }
-
-    void drawSurface() {
+        //find max height
+        float max = 0;
         for (int i = 0; i < uDim; i++)
         {
             for (int j = 0; j < vDim; j++)
             {
-                controlPoints[i, j] = controlObjects[i, j].transform.position; //update control points to the point entities
+                float H = Mathf.Abs(controlObjects[i, j].transform.position.y);
+                if (H > max) max = H;
             }
 
         }
+
+        if (max <= 0.00001f) max = 1; //avoid infinity
+
+        //Normalize height
+        for (int i = 0; i < uDim; i++)
+        {
+            for (int j = 0; j < vDim; j++)
+            {
+                Vector3 P = controlObjects[i, j].transform.position;
+                
+                P.y /= max;
+                controlObjects[i, j].transform.position = P;
+            }
+
+        }
+
+        for (int i = 0; i < uDim; i++)
+        {
+            for (int j = 0; j < vDim; j++)
+            {
+                controlPoints[i, j] = controlObjects[i, j].transform.position; //update control points to the point entities and normalize
+            }
+
+        }
+        //Debug.Log(BS_Basis(0.9999f, 6, 3, K));
+        if (renderSurface)
+        {
+            drawSurface();
+        }
+        
+    }
+
+    void drawSurface() {
+        
 
         float u = 0;
         float v = 0;
@@ -278,7 +312,19 @@ public class nurbs_surface : MonoBehaviour
         {
             for (int j = 0; j < vDim; j++) {
                 Vector3 oldPt = controlPoints[i, j];
-                controlObjects[i, j].transform.position = new Vector3(oldPt.x, -heights[uDim -1 - i, j], oldPt.z);
+                float height = heights[i, j];
+                height = height * height;
+                //neighbour weighting
+                if (neighbourWeighting) {
+                    if ((i > 0) && (i < uDim - 1) && (j > 0) && (j < vDim - 1))
+                    {
+                        height += (heights[i - 1, j] + heights[i - 1, j - 1] + heights[i - 1, j + 1] + heights[i + 1, j] + heights[i + 1, j + 1] + heights[i + 1, j - 1] + heights[i, j + 1] + heights[i, j - 1])*neighbourWeightingFactor;
+                    }
+                }
+                
+                
+                //Debug.Log("OG Height: " + heights[i, j] +  "squared height: " + height);
+                controlObjects[i, j].transform.position = new Vector3(oldPt.x, -height, oldPt.z);
             }
         }
     }
@@ -420,6 +466,8 @@ public class nurbs_surface : MonoBehaviour
         return w;
     }
 
+    
+
     //First derivative of Basis function
     float BS_Basis_Prime(float u, int i, int n, float[] U)
     {
@@ -456,7 +504,7 @@ public class nurbs_surface : MonoBehaviour
      * num points <n>
      * degree <c>
      */
-    float[] generateLinearCoords(int n, int c) {
+    public float[] generateLinearCoords(int n, int c) {
 
         if (c <= n) {
             Debug.LogWarning("generateLinearCoords: Warning! Number of points <n> must be greater than degree <c> (n=" + n + ", c=" + c + ")");
@@ -512,7 +560,7 @@ public class nurbs_surface : MonoBehaviour
             }
         }
 
-        Debug.Log("du " + du + ", dv " + dv);
+        //Debug.Log("du " + du + ", dv " + dv);
         //Now we want to compute dy/dx and dy/dz
 
         
@@ -553,7 +601,7 @@ public class nurbs_surface : MonoBehaviour
 
     }
 
-    Vector3 BS_Surface(float u, float v) {
+    public Vector3 BS_Surface(float u, float v) {
         Vector3 P = Vector3.zero;
         float[] U = genKnotVector(uDim, K, KnotType);
         float[] V = genKnotVector(vDim, L, KnotType);
@@ -592,6 +640,27 @@ public class nurbs_surface : MonoBehaviour
 
         return P;
 
+    }
+
+    //Returns the max depth of the control points
+    public float maxDepth()
+    {
+        float D = 0;
+
+        Vector3 P = controlPoints[uDim / 2, vDim / 2];
+        P += controlPoints[uDim / 2 + 1, vDim / 2 + 1];
+        P += controlPoints[uDim / 2 + 1, vDim / 2];
+        P += controlPoints[uDim / 2 + 1, vDim / 2 - 1];
+
+        P += controlPoints[uDim / 2, vDim / 2 + 1];
+        P += controlPoints[uDim / 2 - 1, vDim / 2 + 1];
+        P += controlPoints[uDim / 2 - 1, vDim / 2];
+        P += controlPoints[uDim / 2 - 1, vDim / 2 - 1];
+        P += controlPoints[uDim / 2, vDim / 2 - 1];
+
+        D = P.y / 9;
+
+        return Mathf.Abs(D);
     }
 
     float nCr(int n, int r) {
